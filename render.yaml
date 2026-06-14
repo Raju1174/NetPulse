@@ -1,0 +1,12 @@
+# Render Blueprint - deploys NetPulse as a free Node web service.
+# In Render: New + -> Blueprint -> pick your GitHub repo, it reads this file.
+services:
+  - type: web
+    name: netpulse-demo
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: node server.js
+    envVars:
+      - key: NODE_VERSION
+        value: 22.14.0

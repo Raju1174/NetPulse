@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell($word = New-Object -ComObject Word.Application; $word.Visible = $false; $doc = $word.Documents.Open\\(\"C:\\\\Users\\\\Rajup\\\\OneDrive\\\\Desktop\\\\Research Paper KJSIM\\\\Net_Pulse_Research_Paper.docx\"\\); $text = $doc.Content.Text; $doc.Close\\(\\); $word.Quit\\(\\); $text.Substring\\(0, [Math]::Min\\(8000, $text.Length\\)\\))",
+      "PowerShell(Get-Process *)"
+    ]
+  }
+}
