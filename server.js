@@ -72,6 +72,12 @@ app.get('/api/metrics', (req, res) => res.json(sim.metrics()));
 app.get('/api/report', (req, res) => res.json(sim.report(parseFloat(req.query.threshold))));
 app.get('/api/topology', (req, res) => res.json(sim.topology()));
 
+// ---- fallback: serve the dashboard for any other (non-API) path ------------
+// so the app loads no matter what URL/path the user opens.
+app.get(/^(?!\/api\/).*/, (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
 // ---- start -----------------------------------------------------------------
 sim.start();
 app.listen(PORT, () => {
