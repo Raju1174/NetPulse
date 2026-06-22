@@ -197,3 +197,7 @@ table.data tr.violating td { background: rgba(244, 63, 94, 0.08); }
 .topo-port { fill: #8aa0c0; font-size: 9px; text-anchor: middle; }
 
 .chip-ip { color: var(--muted); font-size: 11px; margin-left: 4px; }
+
+.chip.selectable { cursor: pointer; transition: border-color .15s, background .15s; }
+.chip.selectable:hover { border-color: var(--accent); }
+.chip.selectable.active { border-color: var(--accent); background: rgba(56,189,248,0.15); color: #e6edf7; }

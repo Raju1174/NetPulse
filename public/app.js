@@ -101,16 +101,49 @@
   }
 
   // ---------- OVERVIEW ----------
+  let selectedDevice = null;   // null = whole network (aggregate)
+  let deviceHist = [];         // client-side history for the selected device
   async function renderOverview() {
     const o = await api('/api/overview');
     $('#upCount').textContent = `${o.devicesUp}/${o.devicesTotal} devices up`;
-    drawGauge($('#g-cpu'), o.cpu, '#38bdf8');
-    drawGauge($('#g-ram'), o.ram, '#a78bfa');
-    drawGauge($('#g-disk'), o.disk, '#f59e0b');
-    drawGauge($('#g-bw'), o.bandwidth, '#34d399');
-    drawPie($('#pie'), o.resource.used, o.resource.free);
-    drawLineChart(o.history);
-    $('#overviewDevices').innerHTML = o.deviceIps.map((d) => `<div class="chip">${d.name}${d.ip && d.ip !== '—' ? ` <span class="chip-ip">${d.ip}</span>` : ''}</div>`).join('');
+    const list = o.deviceIps || [];
+
+    // resolve the current selection (fall back to network view if it vanished)
+    let sel = selectedDevice ? list.find((d) => d.name === selectedDevice) : null;
+    if (selectedDevice && !sel) { selectedDevice = null; deviceHist = []; }
+
+    let cpu, ram, disk, bw, used, free, hist, title;
+    if (sel) {
+      cpu = sel.cpu || 0; ram = sel.ram || 0; disk = sel.disk || 0; bw = sel.bandwidth || 0;
+      used = +(((cpu + ram + disk) / 3)).toFixed(1); free = +(100 - used).toFixed(1);
+      deviceHist.push({ cpu, ram, bandwidth: bw });
+      while (deviceHist.length > 40) deviceHist.shift();
+      hist = deviceHist;
+      title = `${sel.name} — CPU / RAM / Bandwidth %`;
+    } else {
+      cpu = o.cpu; ram = o.ram; disk = o.disk; bw = o.bandwidth;
+      used = o.resource.used; free = o.resource.free;
+      hist = o.history;
+      title = 'Network Performance (CPU / RAM / Bandwidth %)';
+    }
+
+    drawGauge($('#g-cpu'), cpu, '#38bdf8');
+    drawGauge($('#g-ram'), ram, '#a78bfa');
+    drawGauge($('#g-disk'), disk, '#f59e0b');
+    drawGauge($('#g-bw'), bw, '#34d399');
+    drawPie($('#pie'), used, free);
+    drawLineChart(hist);
+    const heading = document.querySelector('#view-overview .card.grow h3');
+    if (heading) heading.textContent = title;
+
+    const chip = (dev, label, ip, active) =>
+      `<div class="chip selectable${active ? ' active' : ''}" data-dev="${dev}">${label}${ip && ip !== '—' ? ` <span class="chip-ip">${ip}</span>` : ''}</div>`;
+    $('#overviewDevices').innerHTML =
+      chip('', 'All Devices', '', !selectedDevice) +
+      list.map((d) => chip(d.name, d.name, d.ip, selectedDevice === d.name)).join('');
+    $('#overviewDevices').querySelectorAll('.chip').forEach((c) => {
+      c.onclick = () => { selectedDevice = c.dataset.dev || null; deviceHist = []; renderOverview(); };
+    });
   }
 
   // ---------- DEVICES ----------
