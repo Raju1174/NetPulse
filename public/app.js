@@ -110,7 +110,7 @@
     drawGauge($('#g-bw'), o.bandwidth, '#34d399');
     drawPie($('#pie'), o.resource.used, o.resource.free);
     drawLineChart(o.history);
-    $('#overviewDevices').innerHTML = o.deviceIps.map((ip) => `<div class="chip">${ip}</div>`).join('');
+    $('#overviewDevices').innerHTML = o.deviceIps.map((d) => `<div class="chip">${d.name}${d.ip && d.ip !== '—' ? ` <span class="chip-ip">${d.ip}</span>` : ''}</div>`).join('');
   }
 
   // ---------- DEVICES ----------
@@ -278,7 +278,7 @@
   // ================= CHART RENDERERS (pure SVG/Canvas) =================
   function drawGauge(el, value, color) {
     const v = Math.max(0, Math.min(100, value));
-    const R = 52, C = Math.PI * R; // semicircle length
+    const R = 60, C = Math.PI * R; // semicircle length (must match arc radius below)
     const off = C * (1 - v / 100);
     el.innerHTML = `
       <svg width="150" height="100" viewBox="0 0 150 100">

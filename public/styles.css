@@ -195,3 +195,5 @@ table.data tr.violating td { background: rgba(244, 63, 94, 0.08); }
 }
 
 .topo-port { fill: #8aa0c0; font-size: 9px; text-anchor: middle; }
+
+.chip-ip { color: var(--muted); font-size: 11px; margin-left: 4px; }

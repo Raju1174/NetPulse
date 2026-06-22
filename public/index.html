@@ -17,7 +17,7 @@
       <p class="tagline">Remote Network Monitoring — Real-time Traffic Analysis &amp; Management</p>
       <form id="loginForm" autocomplete="off">
         <label>Hostname / Jump server
-          <input id="hostname" type="text" value="127.0.0.3" placeholder="e.g. 127.0.0.3" required />
+          <input id="hostname" type="text" value="jump-host" placeholder="e.g. jump-host" required />
         </label>
         <label>Username
           <input id="username" type="text" value="netadmin" placeholder="e.g. netadmin" required />
@@ -26,7 +26,7 @@
           <input id="password" type="password" value="demo" placeholder="••••••" required />
         </label>
         <button type="submit" id="connectBtn">Connect</button>
-        <p class="hint">Demo mode — any non-empty credentials connect over a simulated SSH session.</p>
+        <p class="hint">Connects to the live GNS3 lab through the controller API.</p>
         <p id="loginError" class="error"></p>
       </form>
     </div>
