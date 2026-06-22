@@ -3,33 +3,30 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>NetPulse — Live GNS3 Monitoring</title>
+  <title>NetPulse — Network Monitoring</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
-  <!-- ================= CONNECT ================= -->
+  <!-- ================= LOGIN (report 7.2.1) ================= -->
   <div id="login" class="login-wrap">
     <div class="login-card">
       <div class="brand">
         <span class="pulse-dot"></span>
         <h1>Net<span>Pulse</span></h1>
       </div>
-      <p class="tagline">Live network monitoring — connected to your GNS3 lab</p>
+      <p class="tagline">Remote Network Monitoring — Real-time Traffic Analysis &amp; Management</p>
       <form id="loginForm" autocomplete="off">
-        <label>GNS3 Controller
-          <input id="hostname" type="text" value="127.0.0.1:3080" placeholder="host:port" required />
+        <label>Hostname / Jump server
+          <input id="hostname" type="text" value="127.0.0.3" placeholder="e.g. 127.0.0.3" required />
         </label>
         <label>Username
-          <input id="username" type="text" value="admin" placeholder="GNS3 server user" />
+          <input id="username" type="text" value="netadmin" placeholder="e.g. netadmin" required />
         </label>
         <label>Password
-          <input id="password" type="password" placeholder="leave blank to use server config" />
+          <input id="password" type="password" value="demo" placeholder="••••••" required />
         </label>
-        <label>Project
-          <input id="project" type="text" value="Network Topology" placeholder="GNS3 project name" />
-        </label>
-        <button type="submit" id="connectBtn">Connect to GNS3</button>
-        <p class="hint">Reads the live project over the GNS3 REST API. Blank user/password uses the local server's own credentials.</p>
+        <button type="submit" id="connectBtn">Connect</button>
+        <p class="hint">Demo mode — any non-empty credentials connect over a simulated SSH session.</p>
         <p id="loginError" class="error"></p>
       </form>
     </div>
@@ -45,10 +42,13 @@
       <nav id="nav">
         <a data-view="overview" class="active">📊 Network Overview</a>
         <a data-view="devices">🖧 Devices</a>
-        <a data-view="monitor">📈 Live Monitor</a>
-        <a data-view="maps">🗺️ Topology Map</a>
+        <a data-view="alerts">🚨 Alerts</a>
+        <a data-view="traffic">📈 Traffic Analysis</a>
+        <a data-view="reports">📄 Reports</a>
+        <a data-view="maps">🗺️ Maps</a>
+        <a data-view="perf">⚙️ Performance Metrics</a>
       </nav>
-      <button id="logoutBtn" class="logout">⏻ Disconnect</button>
+      <button id="logoutBtn" class="logout">⏻ Logout</button>
       <div class="sess" id="sessInfo"></div>
     </aside>
 
@@ -60,25 +60,31 @@
 
       <!-- Network Overview -->
       <section id="view-overview" class="view">
-        <div id="connBanner" class="conn-banner hidden"></div>
-        <div class="cards stat-cards">
-          <div class="card stat-card"><h3>Nodes</h3><div id="s-total" class="stat-num">—</div><span class="stat-sub">in project</span></div>
-          <div class="card stat-card"><h3>Started</h3><div id="s-up" class="stat-num up">—</div><span class="stat-sub">running</span></div>
-          <div class="card stat-card"><h3>Stopped</h3><div id="s-down" class="stat-num down">—</div><span class="stat-sub">not running</span></div>
-          <div class="card stat-card"><h3>Subnets</h3><div id="s-nets" class="stat-num">—</div><span class="stat-sub">networks</span></div>
-          <div class="card stat-card"><h3>Links</h3><div id="s-links" class="stat-num">—</div><span class="stat-sub">cabled</span></div>
+        <div class="cards">
+          <div class="card gauge-card"><h3>CPU Usage</h3><div id="g-cpu" class="gauge"></div></div>
+          <div class="card gauge-card"><h3>RAM Usage</h3><div id="g-ram" class="gauge"></div></div>
+          <div class="card gauge-card"><h3>Disk Usage</h3><div id="g-disk" class="gauge"></div></div>
+          <div class="card gauge-card"><h3>Bandwidth</h3><div id="g-bw" class="gauge"></div></div>
         </div>
         <div class="row">
           <div class="card grow">
-            <h3>Devices in Project (live status)</h3>
-            <div id="overviewDevices" class="node-grid"></div>
+            <h3>Network Performance (CPU / RAM / Bandwidth %)</h3>
+            <canvas id="lineChart" height="220"></canvas>
+            <div class="legend">
+              <span><i style="background:#38bdf8"></i>CPU</span>
+              <span><i style="background:#a78bfa"></i>RAM</span>
+              <span><i style="background:#34d399"></i>Bandwidth</span>
+            </div>
           </div>
           <div class="card pie-card">
-            <h3>Nodes by Type</h3>
-            <div id="typeBreakdown" class="type-list"></div>
+            <h3>Overall Resource Usage</h3>
+            <div id="pie" class="pie"></div>
           </div>
         </div>
-        <p class="muted-note">Data source: GNS3 controller <span id="ovCtrl">—</span> · project <span id="ovProj">—</span>. CPU/RAM/bandwidth are not shown because GNS3 does not expose guest metrics for these node types.</p>
+        <div class="card">
+          <h3>Devices Present in Network</h3>
+          <div id="overviewDevices" class="chips"></div>
+        </div>
       </section>
 
       <!-- Devices -->
@@ -90,48 +96,79 @@
             </label>
           </div>
           <table class="data">
-            <thead><tr><th>Status</th><th>Name</th><th>IP Address</th><th>Type / OS</th><th>Network</th><th>Subnet</th><th>Interface</th><th>Gateway</th><th>Console</th><th>State</th></tr></thead>
+            <thead><tr><th>Status</th><th>IP Address</th><th>Hostname</th><th>OS Name</th><th>Network</th><th>Subnet</th><th>Interface</th><th>Communication</th><th>CPU</th><th>RAM</th><th>Disk</th></tr></thead>
             <tbody id="devicesBody"></tbody>
           </table>
         </div>
       </section>
 
-      <!-- Live Monitor (console-probed real metrics) -->
-      <section id="view-monitor" class="view hidden">
-        <p id="monMeta" class="muted-note">Console probe sweeps every ~45s (collected live over each device's console).</p>
+      <!-- Alerts -->
+      <section id="view-alerts" class="view hidden">
         <div class="card">
-          <h3>Device Resource Monitoring — Linux guests <span class="tag-real">/proc · real</span></h3>
+          <div class="toolbar">
+            <label>Bandwidth Threshold Limit: <strong id="thLabel">60</strong>%
+              <input id="threshold" type="range" min="10" max="100" value="60" />
+            </label>
+            <span class="violation-badge" id="violBadge">0 violating</span>
+          </div>
           <table class="data">
-            <thead><tr><th>Device</th><th>IP</th><th>CPU</th><th>RAM</th><th>Disk</th><th>Net rx/tx (Kbps)</th></tr></thead>
-            <tbody id="monLinux"></tbody>
+            <thead><tr><th>Flag</th><th>Status</th><th>IP Address</th><th>Hostname</th><th>Network</th><th>Interface</th><th>Sent (Mbps)</th><th>Recv (Mbps)</th><th>Bandwidth %</th></tr></thead>
+            <tbody id="alertsBody"></tbody>
           </table>
         </div>
+      </section>
+
+      <!-- Traffic Analysis -->
+      <section id="view-traffic" class="view hidden">
         <div class="card">
-          <h3>Router Resource Monitoring <span class="tag-real">SNMP/console · real</span></h3>
-          <table class="data">
-            <thead><tr><th>Router</th><th>IP</th><th>CPU 5s</th><th>CPU 1m</th><th>CPU 5m</th><th>Memory used</th><th>Interfaces (in/out Kbps)</th></tr></thead>
-            <tbody id="monRouters"></tbody>
-          </table>
+          <h3>Bandwidth Usage of All Devices (Mbps)</h3>
+          <div id="trafficBars" class="bars"></div>
         </div>
+      </section>
+
+      <!-- Reports -->
+      <section id="view-reports" class="view hidden">
         <div class="card">
-          <h3>Host Reachability &amp; Latency <span class="tag-real">live ping · real</span></h3>
-          <table class="data">
-            <thead><tr><th>Status</th><th>Host</th><th>IP</th><th>Pinged (gateway)</th><th>Latency</th><th>Note</th></tr></thead>
-            <tbody id="monHosts"></tbody>
-          </table>
+          <div class="toolbar">
+            <h3 style="margin:0">Network Status Report</h3>
+            <button id="printReport" class="btn-print">🖨️ Print / Save as PDF</button>
+          </div>
+          <div id="reportBody" class="report"></div>
         </div>
       </section>
 
       <!-- Maps (topology) -->
       <section id="view-maps" class="view hidden">
         <div class="card">
-          <h3>Network Topology Map (live)</h3>
+          <h3>Network Topology Map</h3>
           <div class="map-legend">
-            <span><i class="dot up"></i> started</span>
-            <span><i class="dot down"></i> stopped</span>
+            <span><i class="dot up"></i> reachable</span>
+            <span><i class="dot down"></i> unreachable</span>
             <span><i class="rtr-key"></i> router</span>
           </div>
           <div id="topoMap" class="topo"></div>
+        </div>
+      </section>
+
+      <!-- Performance Metrics -->
+      <section id="view-perf" class="view hidden">
+        <div id="metricStats" class="cards metric-cards"></div>
+        <div class="card">
+          <h3>Historical Performance (last <span id="mSamples">0</span> samples · 2s interval)</h3>
+          <canvas id="metricChart" height="240"></canvas>
+          <div class="legend">
+            <span><i style="background:#38bdf8"></i>CPU</span>
+            <span><i style="background:#a78bfa"></i>RAM</span>
+            <span><i style="background:#f59e0b"></i>Disk</span>
+            <span><i style="background:#34d399"></i>Bandwidth</span>
+          </div>
+        </div>
+        <div class="card">
+          <h3>Per-Network Averages</h3>
+          <table class="data">
+            <thead><tr><th>Network</th><th>Devices Up</th><th>Avg CPU</th><th>Avg RAM</th><th>Avg Disk</th><th>Avg Bandwidth</th></tr></thead>
+            <tbody id="perNetBody"></tbody>
+          </table>
         </div>
       </section>
     </main>

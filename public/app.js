@@ -1,16 +1,16 @@
-/* NetPulse - Monitor Client (LIVE GNS3). No external libraries. */
+/* NetPulse - Monitor Client (frontend logic). No external libraries. */
 (function () {
   'use strict';
 
   const $ = (s) => document.querySelector(s);
   const api = (p, opts) => fetch(p, opts).then((r) => r.json());
-  const esc = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const fmt = (v, suf = '') => (v == null ? '—' : v + suf);   // VPCS report no metrics -> "—"
 
   let currentView = 'overview';
   let pollTimer = null;
   let session = null;
 
-  // ---------- CONNECT ----------
+  // ---------- LOGIN ----------
   $('#loginForm').addEventListener('submit', async (e) => {
     e.preventDefault();
     const btn = $('#connectBtn');
@@ -26,7 +26,6 @@
           hostname: $('#hostname').value.trim(),
           username: $('#username').value.trim(),
           password: $('#password').value,
-          project: $('#project').value.trim(),
         }),
       });
       if (!res.success) throw new Error(res.error || 'Connection failed');
@@ -36,14 +35,14 @@
       err.textContent = e2.message;
     } finally {
       btn.disabled = false;
-      btn.textContent = 'Connect to GNS3';
+      btn.textContent = 'Connect';
     }
   });
 
   function enterDashboard() {
     $('#login').classList.add('hidden');
     $('#app').classList.remove('hidden');
-    $('#sessInfo').textContent = `${session.project} · ${session.nodesUp}/${session.nodes} up`;
+    $('#sessInfo').textContent = `${session.username}@${session.hostname}`;
     loadNetworks();
     switchView('overview');
     startPolling();
@@ -61,7 +60,10 @@
   document.querySelectorAll('#nav a').forEach((a) => {
     a.addEventListener('click', () => switchView(a.dataset.view));
   });
-  const TITLES = { overview: 'Network Overview', devices: 'Devices', monitor: 'Live Monitor', maps: 'Topology Map' };
+  const TITLES = {
+    overview: 'Network Overview', devices: 'Devices', alerts: 'Alerts',
+    traffic: 'Traffic Analysis', reports: 'Reports', maps: 'Maps', perf: 'Performance Metrics',
+  };
   function switchView(view) {
     currentView = view;
     document.querySelectorAll('#nav a').forEach((a) => a.classList.toggle('active', a.dataset.view === view));
@@ -72,7 +74,7 @@
   }
 
   // ---------- POLLING ----------
-  function startPolling() { stopPolling(); pollTimer = setInterval(refresh, 3000); }
+  function startPolling() { stopPolling(); pollTimer = setInterval(refresh, 2000); }
   function stopPolling() { if (pollTimer) clearInterval(pollTimer); pollTimer = null; }
 
   async function refresh() {
@@ -80,8 +82,11 @@
     try {
       if (currentView === 'overview') await renderOverview();
       else if (currentView === 'devices') await renderDevices();
-      else if (currentView === 'monitor') await renderMonitor();
+      else if (currentView === 'alerts') await renderAlerts();
+      else if (currentView === 'traffic') await renderTraffic();
+      else if (currentView === 'reports') await renderReports();
       else if (currentView === 'maps') await renderTopology();
+      else if (currentView === 'perf') await renderMetrics();
     } catch (e) { /* transient */ }
   }
 
@@ -90,41 +95,21 @@
     const nets = await api('/api/networks');
     const sel = $('#networkSelect');
     sel.innerHTML = '<option value="">All networks</option>' +
-      nets.map((n) => `<option value="${esc(n.id)}">${esc(n.label)} — ${n.count} devices</option>`).join('');
+      nets.map((n) => `<option value="${n.id}">${n.label} — ${n.count} devices</option>`).join('');
     sel.onchange = renderDevices;
   }
 
   // ---------- OVERVIEW ----------
   async function renderOverview() {
     const o = await api('/api/overview');
-    $('#upCount').textContent = `${o.devicesUp}/${o.devicesTotal} nodes up`;
-
-    const banner = $('#connBanner');
-    if (o.connected === false || o.error) {
-      banner.className = 'conn-banner err';
-      banner.textContent = '⚠ Not connected to GNS3: ' + (o.error || 'unknown error') + ' — is the controller running and the project open?';
-    } else {
-      banner.className = 'conn-banner hidden';
-    }
-
-    $('#s-total').textContent = o.devicesTotal;
-    $('#s-up').textContent = o.devicesUp;
-    $('#s-down').textContent = o.devicesTotal - o.devicesUp;
-    $('#s-nets').textContent = o.networks;
-    $('#s-links').textContent = o.links;
-    $('#ovCtrl').textContent = o.controller || '—';
-    $('#ovProj').textContent = `${o.project} (${o.projectStatus})`;
-
-    $('#overviewDevices').innerHTML = (o.devicesList || []).map((d) => `
-      <div class="node-pill ${d.status}">
-        <span class="dot ${d.status}"></span>
-        <span class="np-name">${esc(d.name)}</span>
-        <span class="np-ip">${esc(d.ip || d.type)}</span>
-      </div>`).join('');
-
-    const types = o.byType || {};
-    $('#typeBreakdown').innerHTML = Object.keys(types).sort().map((t) =>
-      `<div class="type-row"><span>${esc(t)}</span><strong>${types[t]}</strong></div>`).join('') || '<p class="muted-note">No nodes.</p>';
+    $('#upCount').textContent = `${o.devicesUp}/${o.devicesTotal} devices up`;
+    drawGauge($('#g-cpu'), o.cpu, '#38bdf8');
+    drawGauge($('#g-ram'), o.ram, '#a78bfa');
+    drawGauge($('#g-disk'), o.disk, '#f59e0b');
+    drawGauge($('#g-bw'), o.bandwidth, '#34d399');
+    drawPie($('#pie'), o.resource.used, o.resource.free);
+    drawLineChart(o.history);
+    $('#overviewDevices').innerHTML = o.deviceIps.map((ip) => `<div class="chip">${ip}</div>`).join('');
   }
 
   // ---------- DEVICES ----------
@@ -133,111 +118,271 @@
     const list = await api('/api/devices' + (net ? '?network=' + encodeURIComponent(net) : ''));
     $('#devicesBody').innerHTML = list.map((d) => `
       <tr>
-        <td><span class="dot ${d.status}"></span> ${d.status === 'up' ? 'started' : 'stopped'}</td>
-        <td>${esc(d.name)}</td>
-        <td>${esc(d.ip)}</td>
-        <td>${esc(d.osName)}</td>
-        <td>${esc(d.network)}</td>
-        <td>${esc(d.subnet)}</td>
-        <td>${esc(d.iface)}</td>
-        <td>${esc(d.gateway)}</td>
-        <td class="mono">${esc(d.console)}</td>
-        <td>${esc(d.reachability)}</td>
-      </tr>`).join('') || '<tr><td colspan="10" class="muted-note">No devices in this network.</td></tr>';
+        <td><span class="dot ${d.status}"></span> ${d.status}</td>
+        <td>${d.ip}</td><td>${d.hostname}</td><td>${d.osName}</td>
+        <td>${d.network}</td><td>${d.subnet}</td><td>${d.iface}</td>
+        <td>${d.communication}</td>
+        <td>${fmt(d.cpu, '%')}</td><td>${fmt(d.ram, '%')}</td><td>${fmt(d.disk, '%')}</td>
+      </tr>`).join('');
   }
 
-  // ---------- LIVE MONITOR (console-probed real metrics) ----------
-  function bar(pct, color) {
-    const v = Math.max(0, Math.min(100, pct == null ? 0 : pct));
-    return `<div class="mini-bar"><div class="mini-fill" style="width:${v}%;background:${color}"></div><span>${pct == null ? '—' : v + '%'}</span></div>`;
-  }
-  async function renderMonitor() {
-    const m = await api('/api/monitor');
-    const when = m.lastSweep ? new Date(m.lastSweep).toLocaleTimeString() : 'pending…';
-    $('#monMeta').innerHTML = `Last console sweep: <strong>${when}</strong>` +
-      (m.sweeping ? ' · <em>sweeping now…</em>' : '') +
-      ` · hosts reachable: <strong>${m.reachableHosts}/${m.totalHosts}</strong>` +
-      (m.error ? ` · <span style="color:#fca5a5">${esc(m.error)}</span>` : '') +
-      (!m.lastSweep ? ' — first sweep can take ~30–60s.' : '');
-
-    $('#monLinux').innerHTML = (m.linux || []).map((l) => `
-      <tr>
-        <td><strong>${esc(l.name)}</strong></td><td>${esc(l.ip)}</td>
-        <td>${bar(l.cpuPct, '#38bdf8')}</td>
-        <td>${bar(l.memUsedPct, '#a78bfa')}<span class="sub">${l.memUsedMB}/${l.memTotalMB} MB</span></td>
-        <td>${bar(l.diskUsedPct, '#f59e0b')}<span class="sub">${l.diskUsedMB}/${l.diskTotalMB} MB</span></td>
-        <td class="mono">${l.rxKbps == null ? '—' : l.rxKbps} / ${l.txKbps == null ? '—' : l.txKbps}</td>
-      </tr>`).join('') || `<tr><td colspan="6" class="muted-note">No Linux guests detected (add a QEMU Linux node to monitor real CPU/RAM/disk/bandwidth).</td></tr>`;
-
-    $('#monRouters').innerHTML = (m.routers || []).map((r) => {
-      const ifs = (r.interfaces || []).map((i) =>
-        `<div class="iface-line"><span class="dot ${i.up ? 'up' : 'down'}"></span>${esc(i.iface)}: ${i.inKbps == null ? '—' : i.inKbps}/${i.outKbps == null ? '—' : i.outKbps}</div>`).join('');
-      const mem = r.memUsedPct == null ? '—' : `${bar(r.memUsedPct, '#a78bfa')}<span class="sub">${r.memUsedMB}/${r.memTotalMB} MB</span>`;
-      return `<tr>
-        <td><strong>${esc(r.name)}</strong></td><td>${esc(r.ip)}</td>
-        <td>${bar(r.cpu5sec, '#38bdf8')}</td><td>${r.cpu1min == null ? '—' : r.cpu1min + '%'}</td><td>${r.cpu5min == null ? '—' : r.cpu5min + '%'}</td>
-        <td>${mem}</td>
-        <td class="ifaces">${ifs || '—'}</td>
-      </tr>`;
-    }).join('') || `<tr><td colspan="7" class="muted-note">No router data yet (sweep pending or routers down).</td></tr>`;
-
-    $('#monHosts').innerHTML = (m.hosts || []).map((h) => `
-      <tr class="${h.reachable ? '' : 'violating'}">
-        <td><span class="dot ${h.reachable ? 'up' : 'down'}"></span> ${h.reachable ? 'reachable' : 'unreachable'}</td>
-        <td>${esc(h.name)}</td><td>${esc(h.ip)}</td><td>${esc(h.target)}</td>
-        <td>${h.latencyMs == null ? '—' : '<strong>' + h.latencyMs + ' ms</strong>'}</td>
-        <td class="muted-note">${esc(h.note)}</td>
-      </tr>`).join('') || `<tr><td colspan="6" class="muted-note">No host data yet (first sweep pending).</td></tr>`;
+  // ---------- ALERTS ----------
+  const thInput = $('#threshold');
+  thInput.addEventListener('input', () => { $('#thLabel').textContent = thInput.value; renderAlerts(); });
+  async function renderAlerts() {
+    const data = await api('/api/alerts?threshold=' + thInput.value);
+    const badge = $('#violBadge');
+    badge.textContent = `${data.violations} violating`;
+    badge.classList.toggle('hot', data.violations > 0);
+    $('#alertsBody').innerHTML = data.devices.map((d) => `
+      <tr class="${d.violating ? 'violating' : ''}">
+        <td>${d.violating ? '<span class="flag">⚑ RED</span>' : ''}</td>
+        <td><span class="dot ${d.status}"></span> ${d.status}</td>
+        <td>${d.ip}</td><td>${d.hostname}</td><td>${d.network}</td><td>${d.iface}</td>
+        <td>${fmt(d.sent)}</td><td>${fmt(d.received)}</td>
+        <td><strong>${fmt(d.bandwidth, '%')}</strong></td>
+      </tr>`).join('');
   }
 
-  // ---------- MAPS (exact GNS3 layout: real x/y coordinates + real links) ----------
+  // ---------- TRAFFIC ----------
+  async function renderTraffic() {
+    const list = await api('/api/traffic');
+    const max = Math.max(100, ...list.map((d) => d.total || 0));
+    $('#trafficBars').innerHTML = list.map((d) => {
+      const t = d.total || 0;
+      const pct = (t / max) * 100;
+      const hot = t > 0.7 * max;
+      return `<div class="bar-row">
+        <div class="lbl">${d.ip} · ${d.hostname}</div>
+        <div class="bar-track"><div class="bar-fill ${hot ? 'hot' : ''}" style="width:${pct}%"></div></div>
+        <div class="val">${d.total == null ? '—' : t + ' Mbps'}</div>
+      </div>`;
+    }).join('');
+  }
+
+  // ---------- REPORTS ----------
+  $('#printReport').addEventListener('click', () => window.print());
+  async function renderReports() {
+    const r = await api('/api/report?threshold=' + thInput.value);
+    const s = r.summary;
+    const when = new Date(r.generatedAt).toLocaleString();
+    const healthClass = s.health === 'Healthy' ? 'ok' : s.health === 'Attention' ? 'warn' : 'bad';
+    $('#reportBody').innerHTML = `
+      <div class="rep-title">
+        <div class="rep-title-brand">🛰️ NetPulse — Network Status Report</div>
+        <div class="rep-title-sub">Remote Network Monitoring · Generated ${when}</div>
+      </div>
+      <div class="rep-head">
+        <div><strong>Generated:</strong> ${when}</div>
+        <div><strong>Overall health:</strong> <span class="badge ${healthClass}">${s.health}</span></div>
+      </div>
+      <div class="rep-grid">
+        <div class="rep-stat"><span>${s.devicesUp}/${s.devicesTotal}</span>Devices up</div>
+        <div class="rep-stat"><span>${s.avgCpu}%</span>Avg CPU</div>
+        <div class="rep-stat"><span>${s.avgRam}%</span>Avg RAM</div>
+        <div class="rep-stat"><span>${s.avgDisk}%</span>Avg Disk</div>
+        <div class="rep-stat"><span>${s.avgBandwidth}%</span>Avg Bandwidth</div>
+        <div class="rep-stat"><span class="${s.violations ? 'hot' : ''}">${s.violations}</span>Alerts > ${s.threshold}%</div>
+      </div>
+      <h4>Networks</h4>
+      <table class="data"><thead><tr><th>Network</th><th>Subnet</th><th>Devices Up</th></tr></thead><tbody>
+        ${r.perNetwork.map((n) => `<tr><td>${n.label}</td><td>${n.subnet}</td><td>${n.up}/${n.total}</td></tr>`).join('')}
+      </tbody></table>
+      <h4>Top Talkers</h4>
+      <table class="data"><thead><tr><th>IP</th><th>Hostname</th><th>Network</th><th>Total (Mbps)</th><th>Bandwidth %</th></tr></thead><tbody>
+        ${r.topTalkers.map((t) => `<tr><td>${t.ip}</td><td>${t.hostname}</td><td>${t.network}</td><td>${t.total}</td><td>${t.bandwidth}%</td></tr>`).join('')}
+      </tbody></table>
+      <h4>Devices Over Threshold (${s.threshold}%)</h4>
+      ${r.flagged.length
+        ? `<table class="data"><thead><tr><th>IP</th><th>Hostname</th><th>Network</th><th>Bandwidth %</th></tr></thead><tbody>
+            ${r.flagged.map((f) => `<tr class="violating"><td>${f.ip}</td><td>${f.hostname}</td><td>${f.network}</td><td><strong>${f.bandwidth}%</strong></td></tr>`).join('')}
+          </tbody></table>`
+        : '<p class="muted-note">No devices currently exceed the threshold.</p>'}`;
+  }
+
+  // ---------- MAPS (topology, SVG tree with connector lines) ----------
   async function renderTopology() {
     const t = await api('/api/topology');
-    const g = t.graph || { nodes: [], links: [] };
     const host = $('#topoMap');
-    if (!g.nodes.length) { host.innerHTML = '<p class="muted-note">No nodes.</p>'; return; }
+    const W = Math.max(host.clientWidth || 900, 760);
+    const nets = t.networks;
+    const cols = nets.length;
 
-    // node box size in GNS3-coordinate space, then fit everything to a viewBox
-    const NW = 150, NH = 46, PAD = 90;
-    const xs = g.nodes.map((n) => n.x), ys = g.nodes.map((n) => n.y);
-    const minX = Math.min(...xs), maxX = Math.max(...xs) + NW;
-    const minY = Math.min(...ys), maxY = Math.max(...ys) + NH;
-    const W = (maxX - minX) + PAD * 2, H = (maxY - minY) + PAD * 2;
-    const X = (x) => x - minX + PAD;           // GNS3 x -> svg x (box top-left)
-    const Y = (y) => y - minY + PAD;
-    const cx = (n) => X(n.x) + NW / 2, cy = (n) => Y(n.y) + NH / 2;
+    // layout constants
+    const coreW = 190, coreH = 50, coreY = 16;
+    const rtrY = 132, rtrH = 46, nodeW = 168;
+    const leafTop = 224, leafH = 42, leafStep = 58;
+    const colX = (i) => (W * (i + 0.5)) / cols; // column centre x
 
-    const byId = new Map(g.nodes.map((n) => [n.id, n]));
+    // gateway (router) per network + its leaf devices
+    const layout = nets.map((n) => {
+      const gw = n.devices.find((d) => d.isRouter) || n.devices[0];
+      const leaves = n.devices.filter((d) => d !== gw);
+      return { net: n, gw, leaves };
+    });
+    const maxLeaves = Math.max(1, ...layout.map((l) => l.leaves.length));
+    const H = leafTop + maxLeaves * leafStep + 10;
+
+    const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;');
     const stroke = (st) => (st === 'up' ? '#34d399' : '#f43f5e');
-    const icon = (n) => (n.type === 'dynamips' ? '🌐' : n.type === 'ethernet_switch' ? '🔀' : '💻');
 
-    // links first (under nodes), with port labels at each end
-    let edges = '';
-    for (const l of g.links) {
-      const a = byId.get(l.source), b = byId.get(l.target);
-      if (!a || !b) continue;
-      const ax = cx(a), ay = cy(a), bx = cx(b), by = cy(b);
-      edges += `<line x1="${ax}" y1="${ay}" x2="${bx}" y2="${by}" class="topo-edge"/>`;
-      const lx = ax + (bx - ax) * 0.22, ly = ay + (by - ay) * 0.22;
-      const rx = ax + (bx - ax) * 0.78, ry = ay + (by - ay) * 0.78;
-      if (l.sourcePort) edges += `<text x="${lx}" y="${ly}" class="topo-port">${esc(l.sourcePort)}</text>`;
-      if (l.targetPort) edges += `<text x="${rx}" y="${ry}" class="topo-port">${esc(l.targetPort)}</text>`;
+    function node(cx, topY, w, h, icon, title, sub, opts) {
+      const x = cx - w / 2;
+      const cls = (opts && opts.cls) || '';
+      const sc = (opts && opts.stroke) || '#243150';
+      const dim = opts && opts.dim ? 'opacity="0.55"' : '';
+      return `<g ${dim}><title>${esc(title)} — ${esc(sub)}</title>
+        <rect x="${x}" y="${topY}" rx="10" width="${w}" height="${h}" class="topo-node ${cls}" stroke="${sc}"/>
+        <text x="${cx}" y="${topY + h / 2 - 3}" text-anchor="middle" class="topo-t1">${icon} ${esc(title)}</text>
+        <text x="${cx}" y="${topY + h / 2 + 13}" text-anchor="middle" class="topo-t2">${esc(sub)}</text></g>`;
     }
 
-    let nodes = '';
-    for (const n of g.nodes) {
-      const x = X(n.x), y = Y(n.y);
-      const dim = n.status !== 'up' ? 'opacity="0.5"' : '';
-      const cls = n.type === 'dynamips' ? 'router' : '';
-      nodes += `<g ${dim}><title>${esc(n.name)} — ${esc(n.ip || n.type)} (${n.status === 'up' ? 'started' : 'stopped'})</title>
-        <rect x="${x}" y="${y}" rx="9" width="${NW}" height="${NH}" class="topo-node ${cls}" stroke="${stroke(n.status)}"/>
-        <text x="${x + NW / 2}" y="${y + NH / 2 - 3}" text-anchor="middle" class="topo-t1">${icon(n)} ${esc(n.name)}</text>
-        <text x="${x + NW / 2}" y="${y + NH / 2 + 13}" text-anchor="middle" class="topo-t2">${esc(n.ip || n.type)}</text></g>`;
-    }
+    let edges = '', nodes = '';
+    const coreCx = W / 2, coreBottom = coreY + coreH;
+    layout.forEach((l, i) => {
+      const cx = colX(i);
+      // core -> router
+      edges += `<path d="M ${coreCx} ${coreBottom} C ${coreCx} ${rtrY - 30}, ${cx} ${coreY + 80}, ${cx} ${rtrY}" class="topo-edge"/>`;
+      // vertical spine router -> last leaf (behind boxes)
+      if (l.leaves.length) {
+        const lastY = leafTop + (l.leaves.length - 1) * leafStep + leafH / 2;
+        edges += `<line x1="${cx}" y1="${rtrY + rtrH}" x2="${cx}" y2="${lastY}" class="topo-edge"/>`;
+      }
+      // router node
+      nodes += node(cx, rtrY, nodeW, rtrH, '🌐', l.gw.hostname, l.gw.ip,
+        { cls: 'router', stroke: stroke(l.gw.status), dim: l.gw.status !== 'up' });
+      // subnet caption
+      nodes += `<text x="${cx}" y="${rtrY - 14}" text-anchor="middle" class="topo-cap">${esc(l.net.label)}</text>`;
+      // leaf devices
+      l.leaves.forEach((d, j) => {
+        const y = leafTop + j * leafStep;
+        nodes += node(cx, y, nodeW - 8, leafH, d.isRouter ? '🌐' : '💻', d.hostname, `${d.ip} · ${d.bandwidth}%`,
+          { stroke: stroke(d.status), dim: d.status !== 'up' });
+      });
+    });
 
-    host.innerHTML = `<svg viewBox="0 0 ${W} ${H}" width="100%" height="${Math.min(H, 760)}" preserveAspectRatio="xMidYMid meet" class="topo-svg">
+    host.innerHTML = `<svg viewBox="0 0 ${W} ${H}" width="100%" height="${H}" class="topo-svg">
       ${edges}
+      ${node(coreCx, coreY, coreW, coreH, '🛰️', t.core.label, t.core.sub, { cls: 'core', stroke: '#38bdf8' })}
       ${nodes}
     </svg>`;
+  }
+
+  // ---------- PERFORMANCE METRICS ----------
+  const METRIC_META = [
+    { key: 'cpu', label: 'CPU', color: '#38bdf8' },
+    { key: 'ram', label: 'RAM', color: '#a78bfa' },
+    { key: 'disk', label: 'Disk', color: '#f59e0b' },
+    { key: 'bandwidth', label: 'Bandwidth', color: '#34d399' },
+  ];
+  async function renderMetrics() {
+    const m = await api('/api/metrics');
+    $('#mSamples').textContent = m.samples;
+    $('#metricStats').innerHTML = METRIC_META.map((meta) => {
+      const st = m.stats[meta.key];
+      return `<div class="card metric-card">
+        <h3 style="color:${meta.color}">${meta.label}</h3>
+        <div class="metric-current">${st.current}%</div>
+        <div class="metric-mma"><span>min ${st.min}</span><span>avg ${st.avg}</span><span>max ${st.max}</span></div>
+      </div>`;
+    }).join('');
+    $('#perNetBody').innerHTML = m.perNetwork.map((n) => `
+      <tr><td>${n.label}</td><td>${n.up}/${n.total}</td><td>${n.cpu}%</td><td>${n.ram}%</td><td>${n.disk}%</td><td>${n.bandwidth}%</td></tr>`).join('');
+    drawMultiLine($('#metricChart'), m.series, METRIC_META);
+  }
+
+  // ================= CHART RENDERERS (pure SVG/Canvas) =================
+  function drawGauge(el, value, color) {
+    const v = Math.max(0, Math.min(100, value));
+    const R = 52, C = Math.PI * R; // semicircle length
+    const off = C * (1 - v / 100);
+    el.innerHTML = `
+      <svg width="150" height="100" viewBox="0 0 150 100">
+        <path d="M15 90 A 60 60 0 0 1 135 90" fill="none" stroke="#243150" stroke-width="14" stroke-linecap="round"/>
+        <path d="M15 90 A 60 60 0 0 1 135 90" fill="none" stroke="${color}" stroke-width="14"
+              stroke-linecap="round" stroke-dasharray="${C}" stroke-dashoffset="${off}"
+              style="transition:stroke-dashoffset .6s ease"/>
+        <text x="75" y="78" text-anchor="middle" font-size="26" font-weight="700" fill="#e6edf7">${v.toFixed(1)}</text>
+        <text x="75" y="94" text-anchor="middle" font-size="11" fill="#8aa0c0">%</text>
+      </svg>`;
+  }
+
+  function drawPie(el, used, free) {
+    const total = used + free || 1;
+    const usedAngle = (used / total) * 360;
+    const large = usedAngle > 180 ? 1 : 0;
+    const rad = (a) => (a - 90) * Math.PI / 180;
+    const x = 60 + 50 * Math.cos(rad(usedAngle));
+    const y = 60 + 50 * Math.sin(rad(usedAngle));
+    el.innerHTML = `
+      <svg width="180" height="150" viewBox="0 0 120 130">
+        <circle cx="60" cy="60" r="50" fill="none" stroke="#243150" stroke-width="18"/>
+        <path d="M60 10 A 50 50 0 ${large} 1 ${x.toFixed(2)} ${y.toFixed(2)}" fill="none" stroke="#38bdf8" stroke-width="18"/>
+        <text x="60" y="58" text-anchor="middle" font-size="20" font-weight="700" fill="#e6edf7">${used.toFixed(1)}%</text>
+        <text x="60" y="74" text-anchor="middle" font-size="10" fill="#8aa0c0">used</text>
+        <text x="60" y="125" text-anchor="middle" font-size="11" fill="#34d399">${free.toFixed(1)}% free</text>
+      </svg>`;
+  }
+
+  function drawLineChart(history) {
+    const cv = $('#lineChart');
+    const w = cv.width = cv.clientWidth || 600;
+    const h = cv.height;
+    const ctx = cv.getContext('2d');
+    ctx.clearRect(0, 0, w, h);
+    const pad = 28;
+    // grid
+    ctx.strokeStyle = '#1b2740'; ctx.lineWidth = 1;
+    for (let i = 0; i <= 4; i++) {
+      const y = pad + (h - 2 * pad) * (i / 4);
+      ctx.beginPath(); ctx.moveTo(pad, y); ctx.lineTo(w - 6, y); ctx.stroke();
+      ctx.fillStyle = '#8aa0c0'; ctx.font = '10px sans-serif';
+      ctx.fillText(String(100 - i * 25), 4, y + 3);
+    }
+    if (!history || history.length < 2) return;
+    const series = [
+      { key: 'cpu', color: '#38bdf8' },
+      { key: 'ram', color: '#a78bfa' },
+      { key: 'bandwidth', color: '#34d399' },
+    ];
+    const n = history.length;
+    const xOf = (i) => pad + (w - pad - 6) * (i / (n - 1));
+    const yOf = (v) => pad + (h - 2 * pad) * (1 - v / 100);
+    for (const s of series) {
+      ctx.beginPath();
+      ctx.strokeStyle = s.color; ctx.lineWidth = 2;
+      history.forEach((pt, i) => {
+        const x = xOf(i), y = yOf(pt[s.key]);
+        i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+      });
+      ctx.stroke();
+    }
+  }
+
+  // multi-series line chart from { key: [values] } + meta [{key,color}]
+  function drawMultiLine(cv, series, meta) {
+    const w = cv.width = cv.clientWidth || 600;
+    const h = cv.height;
+    const ctx = cv.getContext('2d');
+    ctx.clearRect(0, 0, w, h);
+    const pad = 28;
+    ctx.strokeStyle = '#1b2740'; ctx.lineWidth = 1;
+    for (let i = 0; i <= 4; i++) {
+      const y = pad + (h - 2 * pad) * (i / 4);
+      ctx.beginPath(); ctx.moveTo(pad, y); ctx.lineTo(w - 6, y); ctx.stroke();
+      ctx.fillStyle = '#8aa0c0'; ctx.font = '10px sans-serif';
+      ctx.fillText(String(100 - i * 25), 4, y + 3);
+    }
+    const len = Math.max(...meta.map((s) => (series[s.key] || []).length), 0);
+    if (len < 2) return;
+    const xOf = (i) => pad + (w - pad - 6) * (i / (len - 1));
+    const yOf = (v) => pad + (h - 2 * pad) * (1 - v / 100);
+    for (const s of meta) {
+      const data = series[s.key] || [];
+      ctx.beginPath();
+      ctx.strokeStyle = s.color; ctx.lineWidth = 2;
+      data.forEach((v, i) => { const x = xOf(i), y = yOf(v); i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y); });
+      ctx.stroke();
+    }
   }
 })();
