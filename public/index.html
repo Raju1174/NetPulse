@@ -45,6 +45,7 @@
       <nav id="nav">
         <a data-view="overview" class="active">📊 Network Overview</a>
         <a data-view="devices">🖧 Devices</a>
+        <a data-view="monitor">📈 Live Monitor</a>
         <a data-view="maps">🗺️ Topology Map</a>
       </nav>
       <button id="logoutBtn" class="logout">⏻ Disconnect</button>
@@ -91,6 +92,25 @@
           <table class="data">
             <thead><tr><th>Status</th><th>Name</th><th>IP Address</th><th>Type / OS</th><th>Network</th><th>Subnet</th><th>Interface</th><th>Gateway</th><th>Console</th><th>State</th></tr></thead>
             <tbody id="devicesBody"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- Live Monitor (console-probed real metrics) -->
+      <section id="view-monitor" class="view hidden">
+        <p id="monMeta" class="muted-note">Console probe sweeps every ~45s (collected live over each device's console).</p>
+        <div class="card">
+          <h3>Router Resource Monitoring <span class="tag-real">SNMP/console · real</span></h3>
+          <table class="data">
+            <thead><tr><th>Router</th><th>IP</th><th>CPU 5s</th><th>CPU 1m</th><th>CPU 5m</th><th>Memory used</th><th>Interfaces (in/out Kbps)</th></tr></thead>
+            <tbody id="monRouters"></tbody>
+          </table>
+        </div>
+        <div class="card">
+          <h3>Host Reachability &amp; Latency <span class="tag-real">live ping · real</span></h3>
+          <table class="data">
+            <thead><tr><th>Status</th><th>Host</th><th>IP</th><th>Pinged (gateway)</th><th>Latency</th><th>Note</th></tr></thead>
+            <tbody id="monHosts"></tbody>
           </table>
         </div>
       </section>

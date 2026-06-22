@@ -9,6 +9,7 @@
 const path = require('path');
 const express = require('express');
 const gns3 = require('./lib/gns3');
+const probe = require('./lib/probe');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -46,6 +47,7 @@ app.get('/api/networks', (req, res) => res.json(gns3.networks()));
 app.get('/api/overview', (req, res) => res.json(gns3.overview()));
 app.get('/api/devices', (req, res) => res.json(gns3.devices(req.query.network)));
 app.get('/api/topology', (req, res) => res.json(gns3.topology()));
+app.get('/api/monitor', (req, res) => res.json(probe.data()));
 
 // ---- fallback: serve the dashboard for any other (non-API) path ------------
 app.get(/^(?!\/api\/).*/, (req, res) => {
@@ -54,6 +56,8 @@ app.get(/^(?!\/api\/).*/, (req, res) => {
 
 // ---- start -----------------------------------------------------------------
 gns3.start();
+// console-probe sweep (real reachability/latency + router metrics) every 45s
+probe.start(() => gns3.rawDevices(), 45000);
 app.listen(PORT, () => {
   const s = gns3.status();
   console.log('');
