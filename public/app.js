@@ -160,6 +160,15 @@
       (m.error ? ` · <span style="color:#fca5a5">${esc(m.error)}</span>` : '') +
       (!m.lastSweep ? ' — first sweep can take ~30–60s.' : '');
 
+    $('#monLinux').innerHTML = (m.linux || []).map((l) => `
+      <tr>
+        <td><strong>${esc(l.name)}</strong></td><td>${esc(l.ip)}</td>
+        <td>${bar(l.cpuPct, '#38bdf8')}</td>
+        <td>${bar(l.memUsedPct, '#a78bfa')}<span class="sub">${l.memUsedMB}/${l.memTotalMB} MB</span></td>
+        <td>${bar(l.diskUsedPct, '#f59e0b')}<span class="sub">${l.diskUsedMB}/${l.diskTotalMB} MB</span></td>
+        <td class="mono">${l.rxKbps == null ? '—' : l.rxKbps} / ${l.txKbps == null ? '—' : l.txKbps}</td>
+      </tr>`).join('') || `<tr><td colspan="6" class="muted-note">No Linux guests detected (add a QEMU Linux node to monitor real CPU/RAM/disk/bandwidth).</td></tr>`;
+
     $('#monRouters').innerHTML = (m.routers || []).map((r) => {
       const ifs = (r.interfaces || []).map((i) =>
         `<div class="iface-line"><span class="dot ${i.up ? 'up' : 'down'}"></span>${esc(i.iface)}: ${i.inKbps == null ? '—' : i.inKbps}/${i.outKbps == null ? '—' : i.outKbps}</div>`).join('');

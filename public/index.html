@@ -100,6 +100,13 @@
       <section id="view-monitor" class="view hidden">
         <p id="monMeta" class="muted-note">Console probe sweeps every ~45s (collected live over each device's console).</p>
         <div class="card">
+          <h3>Device Resource Monitoring — Linux guests <span class="tag-real">/proc · real</span></h3>
+          <table class="data">
+            <thead><tr><th>Device</th><th>IP</th><th>CPU</th><th>RAM</th><th>Disk</th><th>Net rx/tx (Kbps)</th></tr></thead>
+            <tbody id="monLinux"></tbody>
+          </table>
+        </div>
+        <div class="card">
           <h3>Router Resource Monitoring <span class="tag-real">SNMP/console · real</span></h3>
           <table class="data">
             <thead><tr><th>Router</th><th>IP</th><th>CPU 5s</th><th>CPU 1m</th><th>CPU 5m</th><th>Memory used</th><th>Interfaces (in/out Kbps)</th></tr></thead>
