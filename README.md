@@ -1,71 +1,77 @@
-# NetPulse — Working Demo
+# NetPulse — Live GNS3 Monitoring
 
-A runnable implementation of **NetPulse**, the remote network-monitoring tool
-from the research paper / report. It reproduces the documented architecture
-(Express **Monitor Server** + web **Monitor Client**) and all four dashboard
-screens, backed by a **simulated network** so it runs on any machine without
-GNS3, real devices, SSH targets, or admin rights.
+NetPulse is a remote network-monitoring tool (Express **Monitor Server** + web
+**Monitor Client**). This build runs in **live mode**: instead of simulated
+data, it reads your **real GNS3 lab** over the GNS3 controller REST API and
+shows the actual nodes, their started/stopped status, the links between them,
+and each device's real IP / subnet / gateway (parsed from the live VPCS and
+router configs).
 
 ## Run it
 
 ```bash
-cd Demo
 npm install      # one time
 npm start
 ```
 
-Then open **http://localhost:3000** in a browser.
+Then open **http://localhost:3000**, and click **Connect to GNS3**.
 
-Log in with **any non-empty** Hostname / Username / Password (the form is
-pre-filled with `127.0.0.3` / `netadmin` / `demo`). The login performs a
-*simulated* SSH connection to a jump server, exactly like the real flow.
+The server auto-discovers the local GNS3 controller and its credentials from
+`~/.config/GNS3/<ver>/gns3_server.conf`, so on the same machine it just works.
+The login form lets you override the controller / user / password / project.
 
-## What you get (maps to the report)
+### Requirements
 
-| Screen | Report ref | What it shows |
-|--------|-----------|----------------|
-| **Login** | 7.2.1 | Hostname / Username / Password → Connect (SSH to jump server) |
-| **Network Overview** | 7.2.2 | Live CPU, RAM, Disk & Bandwidth gauges, resource pie, performance line chart, devices in network |
-| **Devices** | 7.2.3 | Select a network (subnet) → device table: OS Name, Network, Subnet, Interface, live metrics |
-| **Alerts** | 6.1 / Fig 3.3 | Set bandwidth **threshold**; devices over the limit get a **red ⚑ flag** |
-| **Traffic Analysis** | 6.1 | Bandwidth usage (Mbps) of all devices as live bars |
+- **GNS3 must be running** with the controller API up (default
+  `http://127.0.0.1:3080`) and the target **project open**.
+- Node.js 18+ (uses the built-in `fetch`).
 
-The simulated topology mirrors the architecture diagram's three tiers:
-`192.168.1.0/24` (Client), `10.10.20.0/24` (Infra), `127.0.0.0/26` (Middle).
+### Configuration (env overrides)
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `GNS3_URL` | from conf, else `http://127.0.0.1:3080` | controller base URL |
+| `GNS3_USER` / `GNS3_PASSWORD` | from `gns3_server.conf` | Basic-auth creds |
+| `GNS3_PROJECT` | `Network Topology` | project to monitor |
+| `GNS3_POLL_MS` | `3000` | how often to refresh from the API |
+| `PORT` | `3000` | NetPulse web port |
+
+## Screens
+
+| Screen | What it shows (all live from GNS3) |
+|--------|-------------------------------------|
+| **Network Overview** | counts of nodes / started / stopped / subnets / links, every node's live status, breakdown by node type |
+| **Devices** | per-network table: status, name, real IP, type/OS, network, subnet, interface, gateway, console |
+| **Topology Map** | the real lab as a tree: controller → gateway router per subnet → host devices, colored by started/stopped |
+
+## What is and isn't available from GNS3
+
+The GNS3 controller API exposes **inventory, node status, links, and device
+configs** — all of which NetPulse surfaces as real data. It does **not** expose
+guest **CPU / RAM / bandwidth** for VPCS or dynamips nodes, so the old
+metric-based screens (gauges, alerts, traffic, performance) were removed rather
+than faked. To add real per-device metrics you'd poll the devices directly
+(SNMP on the routers, or scripted pings/`show` over each node's console).
 
 ## Architecture
 
 ```
-Demo/
-├─ server.js          Monitor Server — Express; routes from report sec 7.1.1
-│                      (/api/connect-ssh, /api/execute-command,
-│                       /sendNetworkUsage, /getNetworkUsage) + dashboard APIs
-├─ lib/simulator.js   Simulated GNS3 network: devices, live metrics, alerts
-└─ public/            Monitor Client (single-page dashboard)
-   ├─ index.html
-   ├─ styles.css
-   └─ app.js          polling + hand-rolled SVG gauges / canvas charts (no CDN)
+server.js          Monitor Server — Express; live data routes
+lib/gns3.js        GNS3 REST API client: nodes, links, status, parsed configs
+public/            Monitor Client (single-page dashboard, no CDN)
+  ├─ index.html
+  ├─ styles.css
+  └─ app.js
 ```
 
 ## API endpoints
 
 | Method | Route | Purpose |
 |--------|-------|---------|
-| POST | `/api/connect-ssh` | Simulated SSH login to jump server |
-| POST | `/api/execute-command` | Simulated `snmpget` / `nmap` / `ifconfig` output |
-| GET  | `/api/networks` | List of subnets |
-| GET  | `/api/overview` | Aggregate CPU/RAM/disk/bandwidth + history |
-| GET  | `/api/devices?network=` | Devices in a subnet |
-| GET  | `/api/alerts?threshold=` | Devices flagged over the bandwidth threshold |
-| GET  | `/api/traffic` | Per-device bandwidth |
-| POST | `/api/disconnect` | End session |
-
-## From demo → real monitoring
-
-`lib/simulator.js` is the only "fake" part. To monitor a real network, replace
-its functions with real implementations using the `ssh2`, `net-snmp`, and
-`node-nmap` packages (and `ping` for ICMP) — the server routes and the entire
-frontend stay unchanged.
-
-> Note: data is **simulated** for a self-contained, repeatable demo (ideal for a
-> presentation/viva). No real hosts are scanned or contacted.
+| POST | `/api/connect-ssh` | verify the GNS3 controller + project are reachable |
+| GET  | `/api/status` | connection state / last error |
+| GET  | `/api/overview` | aggregate counts + per-node status |
+| GET  | `/api/networks` | discovered subnets |
+| GET  | `/api/devices?network=` | devices (optionally filtered to a subnet) |
+| GET  | `/api/topology` | nodes grouped by subnet for the map |
+| POST | `/api/disconnect` | end session |
