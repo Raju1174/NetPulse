@@ -193,3 +193,5 @@ table.data tr.violating td { background: rgba(244, 63, 94, 0.08); }
   #nav { flex-direction: row; flex-wrap: wrap; }
   .logout { margin: 0; }
 }
+
+.topo-port { fill: #8aa0c0; font-size: 9px; text-anchor: middle; }

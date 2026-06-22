@@ -5,6 +5,7 @@
   const $ = (s) => document.querySelector(s);
   const api = (p, opts) => fetch(p, opts).then((r) => r.json());
   const fmt = (v, suf = '') => (v == null ? '—' : v + suf);   // VPCS report no metrics -> "—"
+  const esc = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
   let currentView = 'overview';
   let pollTimer = null;
@@ -200,70 +201,53 @@
         : '<p class="muted-note">No devices currently exceed the threshold.</p>'}`;
   }
 
-  // ---------- MAPS (topology, SVG tree with connector lines) ----------
+  // ---------- MAPS (exact GNS3 layout: real x/y coordinates + real links) ----------
   async function renderTopology() {
     const t = await api('/api/topology');
+    const g = t.graph || { nodes: [], links: [] };
     const host = $('#topoMap');
-    const W = Math.max(host.clientWidth || 900, 760);
-    const nets = t.networks;
-    const cols = nets.length;
+    if (!g.nodes.length) { host.innerHTML = '<p class="muted-note">No nodes.</p>'; return; }
 
-    // layout constants
-    const coreW = 190, coreH = 50, coreY = 16;
-    const rtrY = 132, rtrH = 46, nodeW = 168;
-    const leafTop = 224, leafH = 42, leafStep = 58;
-    const colX = (i) => (W * (i + 0.5)) / cols; // column centre x
+    // node box size in GNS3-coordinate space, then fit everything to a viewBox
+    const NW = 150, NH = 46, PAD = 90;
+    const xs = g.nodes.map((n) => n.x), ys = g.nodes.map((n) => n.y);
+    const minX = Math.min(...xs), maxX = Math.max(...xs) + NW;
+    const minY = Math.min(...ys), maxY = Math.max(...ys) + NH;
+    const W = (maxX - minX) + PAD * 2, H = (maxY - minY) + PAD * 2;
+    const X = (x) => x - minX + PAD;           // GNS3 x -> svg x (box top-left)
+    const Y = (y) => y - minY + PAD;
+    const cx = (n) => X(n.x) + NW / 2, cy = (n) => Y(n.y) + NH / 2;
 
-    // gateway (router) per network + its leaf devices
-    const layout = nets.map((n) => {
-      const gw = n.devices.find((d) => d.isRouter) || n.devices[0];
-      const leaves = n.devices.filter((d) => d !== gw);
-      return { net: n, gw, leaves };
-    });
-    const maxLeaves = Math.max(1, ...layout.map((l) => l.leaves.length));
-    const H = leafTop + maxLeaves * leafStep + 10;
-
-    const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;');
+    const byId = new Map(g.nodes.map((n) => [n.id, n]));
     const stroke = (st) => (st === 'up' ? '#34d399' : '#f43f5e');
+    const icon = (n) => (n.type === 'dynamips' ? '🌐' : n.type === 'ethernet_switch' ? '🔀' : '💻');
 
-    function node(cx, topY, w, h, icon, title, sub, opts) {
-      const x = cx - w / 2;
-      const cls = (opts && opts.cls) || '';
-      const sc = (opts && opts.stroke) || '#243150';
-      const dim = opts && opts.dim ? 'opacity="0.55"' : '';
-      return `<g ${dim}><title>${esc(title)} — ${esc(sub)}</title>
-        <rect x="${x}" y="${topY}" rx="10" width="${w}" height="${h}" class="topo-node ${cls}" stroke="${sc}"/>
-        <text x="${cx}" y="${topY + h / 2 - 3}" text-anchor="middle" class="topo-t1">${icon} ${esc(title)}</text>
-        <text x="${cx}" y="${topY + h / 2 + 13}" text-anchor="middle" class="topo-t2">${esc(sub)}</text></g>`;
+    // links first (under nodes), with port labels at each end
+    let edges = '';
+    for (const l of g.links) {
+      const a = byId.get(l.source), b = byId.get(l.target);
+      if (!a || !b) continue;
+      const ax = cx(a), ay = cy(a), bx = cx(b), by = cy(b);
+      edges += `<line x1="${ax}" y1="${ay}" x2="${bx}" y2="${by}" class="topo-edge"/>`;
+      const lx = ax + (bx - ax) * 0.22, ly = ay + (by - ay) * 0.22;
+      const rx = ax + (bx - ax) * 0.78, ry = ay + (by - ay) * 0.78;
+      if (l.sourcePort) edges += `<text x="${lx}" y="${ly}" class="topo-port">${esc(l.sourcePort)}</text>`;
+      if (l.targetPort) edges += `<text x="${rx}" y="${ry}" class="topo-port">${esc(l.targetPort)}</text>`;
     }
 
-    let edges = '', nodes = '';
-    const coreCx = W / 2, coreBottom = coreY + coreH;
-    layout.forEach((l, i) => {
-      const cx = colX(i);
-      // core -> router
-      edges += `<path d="M ${coreCx} ${coreBottom} C ${coreCx} ${rtrY - 30}, ${cx} ${coreY + 80}, ${cx} ${rtrY}" class="topo-edge"/>`;
-      // vertical spine router -> last leaf (behind boxes)
-      if (l.leaves.length) {
-        const lastY = leafTop + (l.leaves.length - 1) * leafStep + leafH / 2;
-        edges += `<line x1="${cx}" y1="${rtrY + rtrH}" x2="${cx}" y2="${lastY}" class="topo-edge"/>`;
-      }
-      // router node
-      nodes += node(cx, rtrY, nodeW, rtrH, '🌐', l.gw.hostname, l.gw.ip,
-        { cls: 'router', stroke: stroke(l.gw.status), dim: l.gw.status !== 'up' });
-      // subnet caption
-      nodes += `<text x="${cx}" y="${rtrY - 14}" text-anchor="middle" class="topo-cap">${esc(l.net.label)}</text>`;
-      // leaf devices
-      l.leaves.forEach((d, j) => {
-        const y = leafTop + j * leafStep;
-        nodes += node(cx, y, nodeW - 8, leafH, d.isRouter ? '🌐' : '💻', d.hostname, `${d.ip} · ${d.bandwidth}%`,
-          { stroke: stroke(d.status), dim: d.status !== 'up' });
-      });
-    });
+    let nodes = '';
+    for (const n of g.nodes) {
+      const x = X(n.x), y = Y(n.y);
+      const dim = n.status !== 'up' ? 'opacity="0.5"' : '';
+      const cls = n.type === 'dynamips' ? 'router' : '';
+      nodes += `<g ${dim}><title>${esc(n.name)} — ${esc(n.ip || n.type)} (${n.status === 'up' ? 'started' : 'stopped'})</title>
+        <rect x="${x}" y="${y}" rx="9" width="${NW}" height="${NH}" class="topo-node ${cls}" stroke="${stroke(n.status)}"/>
+        <text x="${x + NW / 2}" y="${y + NH / 2 - 3}" text-anchor="middle" class="topo-t1">${icon(n)} ${esc(n.name)}</text>
+        <text x="${x + NW / 2}" y="${y + NH / 2 + 13}" text-anchor="middle" class="topo-t2">${esc(n.ip || n.type)}</text></g>`;
+    }
 
-    host.innerHTML = `<svg viewBox="0 0 ${W} ${H}" width="100%" height="${H}" class="topo-svg">
+    host.innerHTML = `<svg viewBox="0 0 ${W} ${H}" width="100%" height="${Math.min(H, 760)}" preserveAspectRatio="xMidYMid meet" class="topo-svg">
       ${edges}
-      ${node(coreCx, coreY, coreW, coreH, '🛰️', t.core.label, t.core.sub, { cls: 'core', stroke: '#38bdf8' })}
       ${nodes}
     </svg>`;
   }
